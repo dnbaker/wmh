@@ -1,0 +1,3 @@
+[submodule "aesctr"]
+	path = aesctr
+	url = https://github.com/dnbaker/aesctr
