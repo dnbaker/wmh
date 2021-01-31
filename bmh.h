@@ -193,6 +193,89 @@ struct bmh_t {
     bmh_t(size_t m): hvals_(m) {
         heap_.getc().reserve(m);
     }
+    void update_2(IT id, FT w) {
+        auto &tmp = heap_.getc();
+        if(w <= 0.) return;
+        const auto _m = m();
+        PoissonP p(id, w);
+        p.step(_m);
+        if(p.fully_relevant()) hvals_.update(p.idx_, p.x_);
+        const size_t offset = tmp.size();
+        size_t mainiternum = 0, subin  =0;
+        while(p.x_ < hvals_.max()) {
+            ++mainiternum;
+            //std::fprintf(stderr, "x: %g. max: %g\n", p.x_, hvals_.max());
+            while(p.can_split() && p.partially_relevant()) {
+                ++subin;
+                //std::fprintf(stderr, "min %g max %g, splitting!\n", p.minp_, p.maxq_);
+                auto pp = p.split();
+                if(p.fully_relevant())
+                    hvals_.update(p.idx_, p.x_);
+                if(pp.partially_relevant()) {
+                    pp.step(_m);
+                    if(pp.fully_relevant()) hvals_.update(pp.idx_, pp.x_);
+                    if(pp.partially_relevant()) heap_.push(std::move(pp));
+                    tmp.emplace_back(std::move(pp));
+                    std::push_heap(tmp.begin() + offset, tmp.end());
+                }
+                //std::fprintf(stderr, "Finishing subloop at %zu/%zu\n", mainiternum, subin);
+            }
+            if(p.fully_relevant()) {
+                p.step(_m);
+                hvals_.update(p.idx_, p.x_);
+                if(p.x_ <= hvals_.max()) {
+                    tmp.emplace_back(std::move(p));
+                    std::push_heap(tmp.begin() + offset, tmp.end());
+                }
+            }
+            if(tmp.size() == offset) break;
+            std::pop_heap(tmp.begin() + offset, tmp.end());
+            p = std::move(tmp.back());
+            tmp.pop_back();
+        }
+        auto bit = tmp.begin() + offset;
+        for(;bit != tmp.begin() && tmp.front().x_ > hvals_.max();--bit) {
+            std::pop_heap(tmp.begin(), bit, std::greater<>());
+        }
+        for(auto hit = tmp.begin() + offset; hit != tmp.end(); ++hit) {
+            if(hit->x_ <= hvals_.max()) {
+                *bit++ = std::move(*hit);
+                std::push_heap(tmp.begin(), bit, std::greater<>());
+            }
+        }
+        tmp.erase(bit, tmp.end());
+    }
+    void finalize_2() {
+        const auto mv = m();
+        auto &tmp = heap_.getc();
+        std::make_heap(tmp.begin(), tmp.end());
+        while(tmp.size()) {
+            std::pop_heap(tmp.begin(), tmp.end());
+            auto p = std::move(tmp.back());
+            tmp.pop_back();
+            if(p.x_ > hvals_.max()) break;
+            while(p.can_split() && p.partially_relevant()) {
+                auto pp = p.split();
+                if(p.fully_relevant()) hvals_.update(p.idx_, p.x_);
+                if(pp.partially_relevant()) {
+                    pp.step(mv);
+                    if(pp.fully_relevant()) hvals_.update(pp.idx_, pp.x_);
+                    if(pp.x_ <= hvals_.max()) {
+                        tmp.emplace_back(std::move(pp));
+                        std::push_heap(tmp.begin(), tmp.end());
+                    }
+                }
+            }
+            if(p.fully_relevant()) {
+                p.step(mv);
+                hvals_.update(p.idx_, p.x_);
+                if(p.x_ <= hvals_.max()) {
+                    tmp.emplace_back(std::move(p));
+                    std::push_heap(tmp.begin(), tmp.end());
+                }
+            }
+        }
+    }
     void update_1(IT id, FT w) {
         if(w <= 0.) return;
         PoissonP p(id, w);
@@ -231,6 +314,7 @@ struct bmh_t {
     static inline uint64_t reg2sig(FT v) {
         uint64_t t = 0;
         std::memcpy(&t, &v, std::min(sizeof(v), sizeof(uint64_t)));
+        t ^= 0xcb1eb4b41a93fe67uLL;
         return wy::wyhash64_stateless(&t);
     }
     template<typename IT=uint64_t>
