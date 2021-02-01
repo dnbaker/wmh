@@ -351,7 +351,7 @@ struct pmh1_t {
     schism::Schismatic<IT> div_;
     std::vector<FT> res_;
     pmh1_t(size_t m): hvals_(m), div_(m), res_(m) {}
-    
+
     void update(const IT id, const FT w) {
         if(w <= 0.) return;
         const FT wi = 1. / w;
@@ -378,41 +378,66 @@ struct pmh1_t {
         return ret;
     }
 };
-#if 0
+#if 1
 template<typename FT=float>
 struct pmh1a {
     using wd = wd_t<FT>;
     using IT = typename wd::IntType;
+    struct BufEl {
+        uint64_t id;
+        double hv, wi;
+        uint64_t rv;
+    };
 
     mvt_t<FT> hvals_;
+    std::vector<BufEl> buffer_;
     schism::Schismatic<IT> div_;
-    std::vector<FT> res_;
-    s
-    pmh1_t(size_t m): hvals_(m), div_(m), res_(m) {}
-    
+    std::vector<IT> res_;
+    pmh1a(size_t m): hvals_(m), div_(m), res_(m) {}
+
     void update(const IT id, const FT w) {
         if(w <= 0.) return;
         const FT wi = 1. / w;
         uint64_t hi = id;
         uint64_t xi = wy::wyhash64_stateless(&hi);
         auto hv = -std::log((xi >> 12) * 0x1p-52) * wi;
-        size_t iternum = 0;
-        while(hv < hvals_.max()) {
-            if(++iternum % 100 == 0) std::fprintf(stderr, "Inner loop %zu with hv = %g and max = %g\n", iternum, hv, hvals_.max());
-            auto idx = div_.mod(xi);
-            if(hvals_.update(idx, hv)) {
-                res_[idx] = id;
-                if(hv >= hvals_.max()) break;
+        if(hv >= hvals_.max()) return;
+        auto idx = div_.mod(xi);
+        if(hvals_.update(idx, hv)) {
+            res_[idx] = id;
+            if(hv >= hvals_.max()) return;
+        }
+        buffer_.push_back(BufEl{id, hv, wi, hi});
+    }
+    void finalize() {
+      while(!buffer_.empty()) {
+            auto wit = buffer_.begin();
+            for(auto oit = buffer_.begin(); oit != buffer_.end(); ++oit) {
+                const auto id = oit->id;
+                auto &h = oit->hv;
+                auto &rng = oit->rv;
+                auto wi = oit->wi;
+                if(h >= hvals_.max()) continue;
+                h += wi * -std::log((wy::wyhash64_stateless(&rng) >> 12) * 0x1p-52);
+                if(h >= hvals_.max()) continue;
+                auto k = div_.mod(rng);
+                if(hvals_.update(k, h)) {
+                    res_[k] = id;
+                    if(h >= hvals_.max()) continue;
+                }
+                *wit++ = {id, h, wi, rng};
             }
-            xi = wy::wyhash64_stateless(&hi);
-            hv += -std::log((xi >> 12) * 0x1p-52) * wi;
+            buffer_.erase(wit, buffer_.end());
         }
     }
     size_t m() const {return res_.size();}
     template<typename IT=uint64_t>
-    std::vector<IT> to_sigs() const {
+    std::vector<IT> to_sigs(bool randomize=false) const {
         std::vector<IT> ret(m());
-        std::transform(res_.data(), res_.data() + m(), ret.begin(), reg2sig<FT>);
+        std::copy(res_.begin(), res_.end(), ret.begin());
+        if(randomize)
+            std::transform(ret.begin(), ret.end(), ret.begin(),
+                           [](uint64_t x) {return wy::wyhash64_stateless(&x);});
         return ret;
     }
 };
