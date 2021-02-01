@@ -4,6 +4,11 @@
 #include <cassert>
 #include "aesctr/wy.h"
 #include <queue>
+#include <div.h>
+
+static INLINE double hv2exp(uint64_t xi) {
+    return -std::log(static_cast<double>(xi >> 12)) * 0x1p-52;
+}
 
 template<typename FT>
 struct mvt_t {
@@ -20,19 +25,25 @@ struct mvt_t {
     size_t getm() const {return (data_.size() >> 1) + 1;}
     FT max() const {return data_.back();}
     FT operator[](size_t i) const {return data_[i];}
+    void reset() {
+        std::fill(data_.begin(), data_.end(), std::numeric_limits<FT>::max());
+    }
 
-
-    void update(size_t index, FT x) {
+    bool update(size_t index, FT x) {
         const auto sz = data_.size();
         const auto mv = getm();
-        while(x < data_[index]) {
-            data_[index] = x;
-            index = mv + (index >> 1);
-            if(index >= sz) break;
-            size_t lhi = (index - mv) << 1;
-            size_t rhi = lhi + 1;
-            x = std::max(data_[lhi], data_[rhi]);
+        if(x < data_[index]) {
+            do {
+                data_[index] = x;
+                index = mv + (index >> 1);
+                if(index >= sz) break;
+                size_t lhi = (index - mv) << 1;
+                size_t rhi = lhi + 1;
+                x = std::max(data_[lhi], data_[rhi]);
+            } while(x < data_[index]);
+            return true;
         }
+        return false;
     }
 };
 
@@ -94,12 +105,16 @@ struct wd_t {
         tmp.i_ = val;
         return tmp.f_;
     }
+    template<typename OIT, typename=std::enable_if_t<std::is_integral_v<OIT>>>
+    static constexpr FT cvt(OIT val) {return it2ft(val);}
+    template<typename OFT, typename=std::enable_if_t<std::is_floating_point_v<OFT>>>
+    static constexpr IT cvt(OFT val) {return ft2it(val);}
     static constexpr FT maxv = std::numeric_limits<FT>::max();
-    static const IT maxi = ft2it(maxv);
+    static const IT maxi = cvt(maxv);
     using IntType = IT;
 };
 
-template<typename FT=double, typename IT=DefIT<FT>>
+template<typename FT, typename IT=DefIT<FT>>
 struct poisson_process_t {
     static_assert(std::is_arithmetic_v<FT>, "Must be arithmetic");
     static_assert(std::is_integral_v<IT>, "Must be intgral");
@@ -123,40 +138,43 @@ public:
 
     }
     IT widxmax() const {
-        return wd::ft2it(maxq_);
+        return wd::cvt(maxq_);
     }
     IT widxmin() const {
-        return wd::ft2it(minp_);
+        return wd::cvt(minp_);
     }
     bool partially_relevant() const {
-        return wd::it2ft(widxmin() + 1) <= weight_;
+        return wd::cvt(widxmin() + 1) <= weight_;
     }
     bool fully_relevant() const {
-        return wd::it2ft(widxmax()) <= weight_;
+        return wd::cvt(widxmax()) <= weight_;
     }
     bool can_split() const {
-        //std::fprintf(stderr, "indices: %zu %zu\n", size_t(rhi), size_t(lhi));
         return widxmax() > widxmin() + 1;
     }
     // Note: > is reversed, for use in pq
     bool operator>(const poisson_process_t &o) const {return x_ < o.x_;}
     bool operator<(const poisson_process_t &o) const {return x_ > o.x_;}
-    void step(size_t m) {
+    template<typename OIT>
+    void step(const schism::Schismatic<OIT> &fastmod) {
         // Top 52-bits as U01 for exponential with weight of q - p,
         // bottom logm bits for index
+        uint64_t xi = wy::wyhash64_stateless(&wyv_);
+        x_ += -std::log(static_cast<double>(xi >> 12) * 0x1p-52) / (maxq_ - minp_);
+        assert(fastmod.mod(static_cast<IT>(xi)) == (static_cast<IT>(xi) % fastmod.d()) || !std::fprintf(stderr, "lhs: %zu. rhs: %zu. xi: %u. d(): %u\n", size_t(fastmod.mod(static_cast<IT>(xi))), size_t(static_cast<IT>(xi) % fastmod.d()), static_cast<IT>(xi), int(fastmod.d())));
+        idx_ = fastmod.mod(xi);
+    }
+    void step(size_t m) {
         uint64_t xi = wy::wyhash64_stateless(&wyv_);
         x_ += -std::log(static_cast<double>(xi >> 12) * 0x1p-52) / (maxq_ - minp_);
         idx_ = xi % m;
     }
     poisson_process_t split() {
-        auto wmin = widxmin(), wmax = widxmax();
-        uint64_t midpoint = (uint64_t(wmin) + wmax) / 2;
-        //std::fprintf(stderr, "%zu-%zu are splitting at %zu\n", size_t(wmin), size_t(wmax), size_t(midpoint));
-        double midval = wd::it2ft(midpoint);
-        uint64_t xval = wd::ft2it(x_) ^ wy::wyhash64_stateless(&midpoint);
+        uint64_t midpoint = (uint64_t(widxmin()) + widxmax()) / 2;
+        double midval = wd::cvt(midpoint);
+        uint64_t xval = wd::cvt(x_) ^ wy::wyhash64_stateless(&midpoint);
         const double p = (midval - minp_) / (maxq_ - minp_);
-        const double rv = (wy::wyhash64_stateless(&xval) >> 12) * 0x1p-52;
-        //std::fprintf(stderr, "splitting %g->%g at %g with prob %g\n", minp_, maxq_, midval, p);
+        const double rv = static_cast<double>((wy::wyhash64_stateless(&xval) >> 12) * 0x1p-52);
         if(rv < p) {
             auto oldmaxq = maxq_;
             maxq_ = midval;
@@ -170,6 +188,13 @@ public:
 };
 
 
+template<typename FT>
+static inline uint64_t reg2sig(FT v) {
+    uint64_t t = 0;
+    std::memcpy(&t, &v, std::min(sizeof(v), sizeof(uint64_t)));
+    t ^= 0xcb1eb4b41a93fe67uLL;
+    return wy::wyhash64_stateless(&t);
+}
 
 template<typename FT=float>
 struct bmh_t {
@@ -177,7 +202,6 @@ struct bmh_t {
     using IT = typename wd::IntType;
     using PoissonP = poisson_process_t<FT, IT>;
 
-    size_t maxspace_;
     struct pq_t: public std::priority_queue<PoissonP, std::vector<PoissonP>> {
         auto &getc() {return this->c;}
         const auto &getc() const {return this->c;}
@@ -188,17 +212,17 @@ struct bmh_t {
     };
     pq_t heap_;
     mvt_t<FT> hvals_;
+    schism::Schismatic<IT> div_;
     auto m() const {return hvals_.getm();}
 
-    bmh_t(size_t m): hvals_(m) {
+    bmh_t(size_t m): hvals_(m), div_(m) {
         heap_.getc().reserve(m);
     }
     void update_2(IT id, FT w) {
         auto &tmp = heap_.getc();
         if(w <= 0.) return;
-        const auto _m = m();
         PoissonP p(id, w);
-        p.step(_m);
+        p.step(div_);
         if(p.fully_relevant()) hvals_.update(p.idx_, p.x_);
         const size_t offset = tmp.size();
         size_t mainiternum = 0, subin  =0;
@@ -212,7 +236,7 @@ struct bmh_t {
                 if(p.fully_relevant())
                     hvals_.update(p.idx_, p.x_);
                 if(pp.partially_relevant()) {
-                    pp.step(_m);
+                    pp.step(div_);
                     if(pp.fully_relevant()) hvals_.update(pp.idx_, pp.x_);
                     if(pp.partially_relevant()) heap_.push(std::move(pp));
                     tmp.emplace_back(std::move(pp));
@@ -221,7 +245,7 @@ struct bmh_t {
                 //std::fprintf(stderr, "Finishing subloop at %zu/%zu\n", mainiternum, subin);
             }
             if(p.fully_relevant()) {
-                p.step(_m);
+                p.step(div_);
                 hvals_.update(p.idx_, p.x_);
                 if(p.x_ <= hvals_.max()) {
                     tmp.emplace_back(std::move(p));
@@ -246,7 +270,6 @@ struct bmh_t {
         tmp.erase(bit, tmp.end());
     }
     void finalize_2() {
-        const auto mv = m();
         auto &tmp = heap_.getc();
         std::make_heap(tmp.begin(), tmp.end());
         while(tmp.size()) {
@@ -258,7 +281,7 @@ struct bmh_t {
                 auto pp = p.split();
                 if(p.fully_relevant()) hvals_.update(p.idx_, p.x_);
                 if(pp.partially_relevant()) {
-                    pp.step(mv);
+                    pp.step(div_);
                     if(pp.fully_relevant()) hvals_.update(pp.idx_, pp.x_);
                     if(pp.x_ <= hvals_.max()) {
                         tmp.emplace_back(std::move(pp));
@@ -267,7 +290,7 @@ struct bmh_t {
                 }
             }
             if(p.fully_relevant()) {
-                p.step(mv);
+                p.step(div_);
                 hvals_.update(p.idx_, p.x_);
                 if(p.x_ <= hvals_.max()) {
                     tmp.emplace_back(std::move(p));
@@ -279,8 +302,7 @@ struct bmh_t {
     void update_1(IT id, FT w) {
         if(w <= 0.) return;
         PoissonP p(id, w);
-        const auto _m = m();
-        p.step(_m);
+        p.step(div_);
         if(p.fully_relevant()) hvals_.update(p.idx_, p.x_);
         size_t mainiternum = 0, subin  =0;
         while(p.x_ < hvals_.max()) {
@@ -293,14 +315,14 @@ struct bmh_t {
                 if(p.fully_relevant())
                     hvals_.update(p.idx_, p.x_);
                 if(pp.partially_relevant()) {
-                    pp.step(_m);
+                    pp.step(div_);
                     if(pp.fully_relevant()) hvals_.update(pp.idx_, pp.x_);
                     if(pp.partially_relevant()) heap_.push(std::move(pp));
                 }
                 //std::fprintf(stderr, "Finishing subloop at %zu/%zu\n", mainiternum, subin);
             }
             if(p.fully_relevant()) {
-                p.step(_m);
+                p.step(div_);
                 hvals_.update(p.idx_, p.x_);
                 if(p.x_ <= hvals_.max()) heap_.push(std::move(p));
             }
@@ -311,20 +333,89 @@ struct bmh_t {
         }
         heap_.clear();
     }
-    static inline uint64_t reg2sig(FT v) {
-        uint64_t t = 0;
-        std::memcpy(&t, &v, std::min(sizeof(v), sizeof(uint64_t)));
-        t ^= 0xcb1eb4b41a93fe67uLL;
-        return wy::wyhash64_stateless(&t);
-    }
     template<typename IT=uint64_t>
     std::vector<IT> to_sigs() const {
         std::vector<IT> ret(m());
-        for(size_t i = 0; i < m(); ++i) std::fprintf(stderr, "sig %zu is %g\n", i, hvals_[i]);
-        //std::transform(&hvals_.data_[0], &hvals_.data_[mv], ret.begin(), [](auto x) {uint64_t xv = 0; std::memcpy(&x, &xv, sizeof(x)); return wy::wyhash64_stateless(&xv);});
-        std::transform(hvals_.data(), hvals_.data() + m(), ret.begin(), reg2sig);
+        std::transform(hvals_.data(), hvals_.data() + m(), ret.begin(), reg2sig<FT>);
         return ret;
     }
 };
+
+
+template<typename FT=float>
+struct pmh1_t {
+    using wd = wd_t<FT>;
+    using IT = typename wd::IntType;
+
+    mvt_t<FT> hvals_;
+    schism::Schismatic<IT> div_;
+    std::vector<FT> res_;
+    pmh1_t(size_t m): hvals_(m), div_(m), res_(m) {}
+    
+    void update(const IT id, const FT w) {
+        if(w <= 0.) return;
+        const FT wi = 1. / w;
+        uint64_t hi = id;
+        uint64_t xi = wy::wyhash64_stateless(&hi);
+        auto hv = -std::log((xi >> 12) * 0x1p-52) * wi;
+        size_t iternum = 0;
+        while(hv < hvals_.max()) {
+            if(++iternum % 100 == 0) std::fprintf(stderr, "Inner loop %zu with hv = %g and max = %g\n", iternum, hv, hvals_.max());
+            auto idx = div_.mod(xi);
+            if(hvals_.update(idx, hv)) {
+                res_[idx] = id;
+                if(hv >= hvals_.max()) break;
+            }
+            xi = wy::wyhash64_stateless(&hi);
+            hv += -std::log((xi >> 12) * 0x1p-52) * wi;
+        }
+    }
+    size_t m() const {return res_.size();}
+    template<typename IT=uint64_t>
+    std::vector<IT> to_sigs() const {
+        std::vector<IT> ret(m());
+        std::transform(res_.data(), res_.data() + m(), ret.begin(), reg2sig<FT>);
+        return ret;
+    }
+};
+#if 0
+template<typename FT=float>
+struct pmh1a {
+    using wd = wd_t<FT>;
+    using IT = typename wd::IntType;
+
+    mvt_t<FT> hvals_;
+    schism::Schismatic<IT> div_;
+    std::vector<FT> res_;
+    s
+    pmh1_t(size_t m): hvals_(m), div_(m), res_(m) {}
+    
+    void update(const IT id, const FT w) {
+        if(w <= 0.) return;
+        const FT wi = 1. / w;
+        uint64_t hi = id;
+        uint64_t xi = wy::wyhash64_stateless(&hi);
+        auto hv = -std::log((xi >> 12) * 0x1p-52) * wi;
+        size_t iternum = 0;
+        while(hv < hvals_.max()) {
+            if(++iternum % 100 == 0) std::fprintf(stderr, "Inner loop %zu with hv = %g and max = %g\n", iternum, hv, hvals_.max());
+            auto idx = div_.mod(xi);
+            if(hvals_.update(idx, hv)) {
+                res_[idx] = id;
+                if(hv >= hvals_.max()) break;
+            }
+            xi = wy::wyhash64_stateless(&hi);
+            hv += -std::log((xi >> 12) * 0x1p-52) * wi;
+        }
+    }
+    size_t m() const {return res_.size();}
+    template<typename IT=uint64_t>
+    std::vector<IT> to_sigs() const {
+        std::vector<IT> ret(m());
+        std::transform(res_.data(), res_.data() + m(), ret.begin(), reg2sig<FT>);
+        return ret;
+    }
+};
+#endif
 
 #endif
