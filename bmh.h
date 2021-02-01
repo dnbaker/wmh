@@ -358,9 +358,8 @@ struct pmh1_t {
         uint64_t hi = id;
         uint64_t xi = wy::wyhash64_stateless(&hi);
         auto hv = -std::log((xi >> 12) * 0x1p-52) * wi;
-        size_t iternum = 0;
         while(hv < hvals_.max()) {
-            if(++iternum % 100 == 0) std::fprintf(stderr, "Inner loop %zu with hv = %g and max = %g\n", iternum, hv, hvals_.max());
+            //if(++iternum % 100 == 0) std::fprintf(stderr, "Inner loop %zu with hv = %g and max = %g\n", iternum, hv, hvals_.max());
             auto idx = div_.mod(xi);
             if(hvals_.update(idx, hv)) {
                 res_[idx] = id;
@@ -378,9 +377,8 @@ struct pmh1_t {
         return ret;
     }
 };
-#if 1
 template<typename FT=float>
-struct pmh1a {
+struct pmh1a_t {
     using wd = wd_t<FT>;
     using IT = typename wd::IntType;
     struct BufEl {
@@ -393,7 +391,7 @@ struct pmh1a {
     std::vector<BufEl> buffer_;
     schism::Schismatic<IT> div_;
     std::vector<IT> res_;
-    pmh1a(size_t m): hvals_(m), div_(m), res_(m) {}
+    pmh1a_t(size_t m): hvals_(m), div_(m), res_(m) {}
 
     void update(const IT id, const FT w) {
         if(w <= 0.) return;
@@ -441,6 +439,5 @@ struct pmh1a {
         return ret;
     }
 };
-#endif
 
 #endif

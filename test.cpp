@@ -12,7 +12,7 @@ int main(int argc, char **argv) {
     size_t m = argc < 3 ? 100: std::atoi(argv[2]);
     bmh_t<float> bmh(m), bmh2(m), bmh3(m), bmh4(m), bmh7(m);
     pmh1_t pmh1(m), pmh2(m);
-    pmh1a pmh3(m), pmh4(m);
+    pmh1a_t pmh3(m), pmh4(m);
     assert(bmh.m() == m);
     assert(bmh2.m() == m);
     assert(std::equal(bmh.hvals_.data(), bmh.hvals_.data() + m, bmh2.hvals_.data()));
