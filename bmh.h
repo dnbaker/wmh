@@ -6,10 +6,6 @@
 #include <queue>
 #include <div.h>
 
-static INLINE double hv2exp(uint64_t xi) {
-    return -std::log(static_cast<double>(xi >> 12)) * 0x1p-52;
-}
-
 template<typename FT>
 struct mvt_t {
     std::vector<FT> data_;

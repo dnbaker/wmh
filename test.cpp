@@ -33,10 +33,11 @@ int main(int argc, char **argv) {
         pmh2.update(i, 1);
         pmh3.update(i, 1);
         pmh4.update(i, 1);
+        if(i % 16 == 0) pmh3.update(i * i * 37 - i * 14, 16);
         //if(i % 100 == 0) std::fprintf(stderr, "Processed %zu/%zu\r\n", i, n);
     }
     stop = std::chrono::high_resolution_clock::now();
-    std::fprintf(stderr, "Updates for 2PMH: %gs\n", static_cast<double>((stop - start).count() / 1000) * .001);
+    std::fprintf(stderr, "Updates for 8PMH: %gs\n", static_cast<double>((stop - start).count() / 1000) * .001);
     bmh4.finalize_2();
     auto s1 = bmh.to_sigs(), s2 = bmh2.to_sigs();
     auto s4 = bmh4.to_sigs();
@@ -46,14 +47,17 @@ int main(int argc, char **argv) {
     pmh3.finalize();
     pmh4.finalize();
     auto ss3 = pmh3.to_sigs(), ss4 = pmh4.to_sigs();
-    size_t nmatch = 0;
+    size_t nmatch = 0, npmatch = 0;
     for(size_t i = 0; i < m; ++i) {
         nmatch += s7[i] == s1[i];
+        npmatch += ss3[i] == ss4[i];
         //std::fprintf(stderr, "%" PRIu64 ":%" PRIu64 ":%" PRIu64 "\n", s1[i], s2[i], s3[i]);
         //std::fprintf(stderr, "[%" PRIu64 ":%" PRIu64 ":%" PRIu64 "]\n", s4[i], s5[i], s6[i]);
     }
     std::fprintf(stderr, "Expected 1/16 signatures to match. Matching: %zu/%zu\n", nmatch, m);
+    std::fprintf(stderr, "Expected somewhere around half of signatures to match. Matching: %zu/%zu\n", npmatch, m);
     assert(std::equal(s1.begin(), s1.end(), s2.begin()));
     assert(std::equal(s1.begin(), s1.end(), s4.begin()));
+    
     //assert(!std::equal(s1.begin(), s1.end(), s3.begin()));
 }
