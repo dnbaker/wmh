@@ -415,7 +415,7 @@ struct pmh2_t {
     mvt_t<FT> hvals_;
     schism::Schismatic<IT> div_;
     std::vector<IT> res_;
-    fy::LazyShuffler ls_;
+    fy::LazyShuffler<IT> ls_;
     pmh2_t(size_t m): hvals_(m), div_(m), res_(m), ls_(m) {
     }
 

@@ -11,11 +11,13 @@ namespace fisher_yates {
 
 using std::size_t;
 
+template<typename IntT=uint32_t>
 struct LazyShuffler {
     // Algorithm 6, https://arxiv.org/pdf/1911.00675.pdf
-    // Uses 32-bit integers for cheaper modulo reductions,
+    // Uses 32-bit integers for cheaper modulo reductions by default,
     // and uses the fastmod https://arxiv.org/abs/1902.01961 trick
-    using IT = uint32_t;
+    static_assert(std::is_integral_v<IntT>, "IntT must be integral");
+    using IT = typename std::make_unsigned<uint32_t>::type;
 private:
     std::vector<IT> data_;
     wy::WyRand<uint32_t, 4> rng_;
@@ -27,6 +29,9 @@ private:
     IT &getv(size_t i) {return data_[(i << 1) + 1];}
 public:
     LazyShuffler(size_t n, uint64_t seed=0): data_(n * 2), rng_(seed), sz_(n) {
+        if(n > std::numeric_limits<IT>::max()) {
+            throw std::runtime_error(std::string("Error: Integer width ") + std::to_string(sizeof(IntT)) + ", insufficient for " + std::to_string(n) + "elements");
+        }
         divs_.reserve(n);
         for(size_t i = 0; i < n; ++i)
             divs_.emplace_back(n - i);
