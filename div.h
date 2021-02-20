@@ -92,7 +92,17 @@ template<typename T> struct div_t {
 
 
 template<typename T, bool shortcircuit=false>
-struct Schismatic;
+struct Schismatic {
+    const size_t n_;
+    Schismatic(size_t n): n_(n) {}
+    auto div(T x) const {return x / n_;}
+    auto mod(T x) const {return x % n_;}
+    INLINE div_t<T> divmod(T v) const {
+        auto d = div(v);
+        return div_t<T> {d, v - n_ * d};
+    }
+};
+
 template<bool shortcircuit> struct Schismatic<uint64_t, shortcircuit> {
 private:
     uint64_t d_;

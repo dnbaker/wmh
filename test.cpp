@@ -16,6 +16,7 @@ int main(int argc, char **argv) {
     pmh1_t pmh1(m), pmh2(m);
     pmh1a_t pmh3(m), pmh4(m);
     pmh2_t pm21(m), pm22(m), pm23(m), pm24(m);
+    pmh2_t<long double> lpm21(m), lpm22(m), lpm23(m), lpm24(m);
 #if ENABLE_SLEEF
     simdpmh1_t sph(m), sph2(m), sph3(m);
 #endif
@@ -36,6 +37,7 @@ int main(int argc, char **argv) {
     start = std::chrono::high_resolution_clock::now();
     for(size_t i = 0; i < n; ++i) {
         pm21.update(i, 1.);
+        lpm21.update(i, 1.);
         pm22.update(i, 1);
         pm23.update(i, 1);
         pm24.update(i, 1);

@@ -16,7 +16,7 @@ struct LazyShuffler {
     // Algorithm 6, https://arxiv.org/pdf/1911.00675.pdf
     // Uses 32-bit integers for cheaper modulo reductions by default,
     // and uses the fastmod https://arxiv.org/abs/1902.01961 trick
-    static_assert(std::is_integral_v<IntT>, "IntT must be integral");
+    static_assert(std::is_integral_v<IntT> || std::is_same_v<IntT, __uint128_t>, "IntT must be integral");
     using IT = typename std::make_unsigned<uint32_t>::type;
 private:
     std::vector<IT> data_;

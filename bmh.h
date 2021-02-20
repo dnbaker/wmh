@@ -90,12 +90,13 @@ using DefIT = std::conditional_t<sizeof(FT) == 4, uint32_t,
                std::conditional_t<sizeof(FT) == 8, uint64_t,
                std::conditional_t<sizeof(FT) == 2, uint16_t,
                std::conditional_t<sizeof(FT) == 1, uint8_t,
-               void>>>>;
+               std::conditional_t<sizeof(FT) == 16, __uint128_t,
+               void>>>>>;
 
 template<typename FT>
 struct wd_t {
     using IT = DefIT<FT>;
-    static_assert(std::is_integral_v<IT>, "Sanity check");
+    static_assert(std::is_integral_v<IT> || std::is_same_v<IT, __uint128_t>, "Sanity check");
 
     union ITFTU {
         IT i_; FT f_;
@@ -346,7 +347,11 @@ struct bmh_t {
     template<typename IT=uint64_t>
     std::vector<IT> to_sigs() const {
         std::vector<IT> ret(m());
-        std::transform(hvals_.data(), hvals_.data() + m(), ret.begin(), reg2sig<FT>);
+        if(std::is_integral_v<IT>) {
+            std::transform(hvals_.data(), hvals_.data() + m(), ret.begin(), reg2sig<FT>);
+        } else {
+            std::copy(hvals_.data(), hvals_.data() + m(), ret.begin());
+        }
         return ret;
     }
 };
@@ -357,6 +362,7 @@ struct BagMinHash1: bmh_t<FT> {
     void add(IT id, FT w) {
         this->update_1(id, w);
     }
+    template<typename IT> void update(IT id, FT w) {add(id, w);}
     void finalize() {}
 };
 template<typename FT>
@@ -367,6 +373,7 @@ struct BagMinHash2: bmh_t<FT> {
     void add(IT id, FT w) {
         S::update_2(id, w);
     }
+    template<typename IT> void update(IT id, FT w) {add(id, w);}
     void finalize() {S::finalize_2();}
 };
 
@@ -431,20 +438,29 @@ struct pmh2_t {
         const FT wi = 1. / w;
         size_t i = 0;
         uint64_t rv = wy::wyhash64_stateless(&hi);
-        auto hv = -std::log((rv >> 12) * 0x1p-52) * wi;
+        FT hv;
+        CONST_IF(sizeof(FT) <= 8) {
+            hv = -std::log(rv * 0x1p-64) * wi;
+        } else {
+            hv = -std::log(((__uint128_t(rv) << 64) | hi) * 0x1p-128L) * wi;
+        }
         if(hv >= hvals_.max()) return;
         ls_.reset();
         ls_.seed(rv);
-        //std::unordered_set<IT> idxes;
         do {
             auto idx = ls_.step();
             if(hvals_.update(idx, hv)) {
                 res_[idx] = id;
                 if(hv >= hvals_.max()) return;
             }
-            hv += -std::log((wy::wyhash64_stateless(&hi) >> 12) * 0x1p-52)
-                    * wi // weight inverse
-                    * getbeta(i++); // beta: (m / (m - i - 1))
+            CONST_IF(sizeof(FT) <= 8) {
+                hv += -std::log(wy::wyhash64_stateless(&hi) * 0x1p-64)
+                        * wi // weight inverse
+                        * getbeta(i); // beta: (m / (m - i - 1))
+            } else {
+                hv = -std::log(((__uint128_t(rv) << 64) | hi) * 0x1p-128L) * wi * getbeta(i);
+            }
+            ++i;
         } while(hv < hvals_.max());
     }
     void add(const IT id, const FT w) {update(id, w);}
@@ -452,7 +468,11 @@ struct pmh2_t {
     template<typename IT=uint64_t>
     std::vector<IT> to_sigs() const {
         std::vector<IT> ret(m());
-        std::transform(res_.data(), res_.data() + m(), ret.begin(), reg2sig<FT>);
+        if constexpr(std::is_integral_v<IT>) {
+            std::transform(hvals_.data(), hvals_.data() + m(), ret.begin(), reg2sig<FT>);
+        } else {
+            std::copy(hvals_.data(), hvals_.data() + m(), ret.begin());
+        }
         return ret;
     }
 };
@@ -460,6 +480,8 @@ struct pmh2_t {
 
 template<typename FT=double, bool gen_256=true>
 struct simdpmh1_t: public pmh1_t<FT> {
+    // This structure is actually slower than pmh1_t
+    // We need to generate so few values asymptotically that it's not worth it.
     using wd = wd_t<FT>;
     using IT = typename wd::IntType;
     simdpmh1_t(size_t m): pmh1_t<FT>(m) {}
