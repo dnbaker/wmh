@@ -167,13 +167,13 @@ public:
         // Top 52-bits as U01 for exponential with weight of q - p,
         // bottom logm bits for index
         uint64_t xi = wy::wyhash64_stateless(&wyv_);
-        x_ += -std::log(static_cast<double>(xi >> 12) * 0x1p-52) / (maxq_ - minp_);
+        x_ += -std::log((xi >> 12) * 0x1p-52) / (maxq_ - minp_);
         //assert(fastmod.mod(static_cast<IT>(xi)) == (static_cast<IT>(xi) % fastmod.d()) || !std::fprintf(stderr, "lhs: %zu. rhs: %zu. xi: %u. d(): %u\n", size_t(fastmod.mod(static_cast<IT>(xi))), size_t(static_cast<IT>(xi) % fastmod.d()), static_cast<IT>(xi), int(fastmod.d())));
         idx_ = fastmod.mod(xi);
     }
     void step(size_t m) {
         uint64_t xi = wy::wyhash64_stateless(&wyv_);
-        x_ += -std::log(static_cast<double>(xi >> 12) * 0x1p-52) / (maxq_ - minp_);
+        x_ += -std::log((xi >> 12) * 0x1p-52) / (maxq_ - minp_);
         idx_ = xi % m;
     }
     poisson_process_t split() {
@@ -181,7 +181,7 @@ public:
         double midval = wd::cvt(midpoint);
         uint64_t xval = wd::cvt(x_) ^ wy::wyhash64_stateless(&midpoint);
         const double p = (midval - minp_) / (maxq_ - minp_);
-        const double rv = static_cast<double>((wy::wyhash64_stateless(&xval) >> 12) * 0x1p-52);
+        const double rv = (wy::wyhash64_stateless(&xval) * 0x1p-64);
         //auto mynsteps = static_cast<size_t>(-1);
         const bool goleft = rv < p;
         auto oldmaxq = maxq_;
@@ -394,14 +394,14 @@ struct pmh1_t {
         const FT wi = 1. / w;
         uint64_t hi = id;
         uint64_t xi = wy::wyhash64_stateless(&hi);
-        for(auto hv = -std::log((xi >> 12) * 0x1p-52) * wi; hv < hvals_.max();) {
+        for(auto hv = -std::log(xi * 0x1p-64) * wi; hv < hvals_.max();) {
             auto idx = div_.mod(xi);
             if(hvals_.update(idx, hv)) {
                 res_[idx] = id;
                 if(hv >= hvals_.max()) break;
             }
             xi = wy::wyhash64_stateless(&hi);
-            hv += -std::log((xi >> 12) * 0x1p-52) * wi;
+            hv += -std::log(xi * 0x1p-64) * wi;
         }
     }
     void add(const IT id, const FT w) {update(id, w);}
@@ -520,7 +520,7 @@ struct simdpmh1_t: public pmh1_t<FT> {
         const FT wi = 1. / w;
         simd_t rng;
         uint64_t xi = init_simd(rng, id);
-        auto hv =  -std::log((xi >> 12) * 0x1p-52) * wi;
+        auto hv =  -std::log(xi * 0x1p-64) * wi;
         if(hv >= max()) return;
         size_t idx = this->div_.mod(xi);
         if(this->hvals_.update(idx, hv)) {
@@ -586,7 +586,7 @@ struct pmh1a_t {
         const FT wi = 1. / w;
         uint64_t hi = id;
         uint64_t xi = wy::wyhash64_stateless(&hi);
-        auto hv = -std::log((xi >> 12) * 0x1p-52) * wi;
+        auto hv = -std::log(xi * 0x1p-64) * wi;
         if(hv >= hvals_.max()) return;
         auto idx = div_.mod(xi);
         if(hvals_.update(idx, hv)) {
@@ -605,7 +605,7 @@ struct pmh1a_t {
                 auto &rng = oit->rv;
                 auto wi = oit->wi;
                 if(h >= hvals_.max()) continue;
-                h += wi * -std::log((wy::wyhash64_stateless(&rng) >> 12) * 0x1p-52);
+                h += wi * -std::log(wy::wyhash64_stateless(&rng) * 0x1p-64);
                 if(h >= hvals_.max()) continue;
                 auto k = div_.mod(rng);
                 if(hvals_.update(k, h)) {
